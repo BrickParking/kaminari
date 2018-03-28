@@ -38,5 +38,53 @@ module Kaminari
         end
       end
     end
+
+    def without_count
+      extend ::Kaminari::PaginatableWithoutCount
+    end
+  end
+
+  # A module that makes AR::Relation paginatable without having to cast another SELECT COUNT query
+  module PaginatableWithoutCount
+    # Overwrite AR::Relation#load to actually load one more record to judge if the page has next page
+    # then store the result in @_has_next ivar
+    def load
+      if loaded? || limit_value.nil?
+        super
+      else
+        @values[:limit] = limit_value + 1
+        # FIXME: this could be removed when we're dropping AR 4 support
+        @arel.limit = @values[:limit] if @arel && (Integer === @arel.limit)
+        super
+        @values[:limit] = limit_value - 1
+        # FIXME: this could be removed when we're dropping AR 4 support
+        @arel.limit = @values[:limit] if @arel && (Integer === @arel.limit)
+
+        if @records.any?
+          @records = @records.dup if (frozen = @records.frozen?)
+          @_has_next = !!@records.delete_at(limit_value)
+          @records.freeze if frozen
+        end
+
+        self
+      end
+    end
+
+    # The page wouldn't be the last page if there's "limit + 1" record
+    def last_page?
+      !out_of_range? && !@_has_next
+    end
+
+    # Empty relation needs no pagination
+    def out_of_range?
+      load unless loaded?
+      @records.empty?
+    end
+
+    # Force to raise an exception if #total_count is called explicitly.
+    def total_count
+      raise "This scope is marked as a non-count paginable scope and can't be used in combination " \
+            "with `#paginate' or `#page_entries_info'. Use #link_to_next_page or #link_to_previous_page instead."
+    end
   end
 end
